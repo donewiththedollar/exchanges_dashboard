@@ -39,9 +39,51 @@ class BybitSpot:
             raise SystemExit()
 
         self.tick_symbols = []
+        self.all_symbols = []
+
+    def find_new_traded_symbols(self):
+        """Automatically discover symbols that have been traded"""
+        while True:
+            try:
+                # Get all spot symbols from Bybit
+                if not self.all_symbols:
+                    instruments_response = self.client.get_instruments_info(category="spot")
+                    if instruments_response['retCode'] == 0:
+                        self.all_symbols = [item['symbol'] for item in instruments_response['result']['list']]
+                        logger.info(f"{self.alias}: Found {len(self.all_symbols)} spot symbols")
+
+                counter = 0
+                for symbol in self.all_symbols:
+                    if symbol not in self.repository.get_symbol_checks(account=self.alias):
+                        if not self.repository.is_symbol_traded(symbol, account=self.alias) and counter < 3:
+                            # Check if this symbol has any trades
+                            trades_response = self.client.get_executions(
+                                category="spot",
+                                symbol=symbol,
+                                limit=1
+                            )
+                            counter += 1
+                            self.repository.process_symbol_checked(symbol, account=self.alias)
+
+                            if trades_response['retCode'] == 0:
+                                trades = trades_response['result'].get('list', [])
+                                if len(trades) > 0:
+                                    logger.info(f'{self.alias}: Trades found for {symbol}, adding to sync list')
+                                    self.repository.process_traded_symbol(symbol, account=self.alias)
+
+                logger.info(f'{self.alias}: Updated new traded symbols')
+                time.sleep(30)
+            except Exception as e:
+                logger.error(f'{self.alias}: Failed to verify unchecked symbols: {e}')
+                time.sleep(60)
 
     def start(self):
         logger.info(f'{self.alias}: Starting Bybit Spot scraper')
+
+        # Start symbol discovery thread
+        symbol_search_thread = threading.Thread(
+            name=f'symbol_search_thread', target=self.find_new_traded_symbols, daemon=True)
+        symbol_search_thread.start()
 
         # Start balance sync thread
         sync_balance_thread = threading.Thread(
@@ -140,7 +182,15 @@ class BybitSpot:
 
         while True:
             try:
-                traded_symbols = self.repository.get_traded_symbols(account=self.alias)
+                # Get next symbol to sync (iterates through all traded symbols)
+                symbol = self.repository.get_next_traded_symbol(account=self.alias)
+
+                if symbol is None:
+                    logger.info(f"{self.alias}: No traded symbols to sync")
+                    time.sleep(120)
+                    continue
+
+                traded_symbols = [symbol]
 
                 for symbol in traded_symbols:
                     if symbol not in first_trade_reached:

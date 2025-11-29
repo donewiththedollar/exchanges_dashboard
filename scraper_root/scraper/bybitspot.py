@@ -55,7 +55,7 @@ class BybitSpot:
                 counter = 0
                 for symbol in self.all_symbols:
                     if symbol not in self.repository.get_symbol_checks(account=self.alias):
-                        if not self.repository.is_symbol_traded(symbol, account=self.alias) and counter < 3:
+                        if not self.repository.is_symbol_traded(symbol, account=self.alias) and counter < 10:
                             # Check if this symbol has any trades
                             trades_response = self.client.get_executions(
                                 category="spot",
@@ -189,6 +189,10 @@ class BybitSpot:
                     logger.info(f"{self.alias}: No traded symbols to sync")
                     time.sleep(120)
                     continue
+
+                # Mark this symbol as being downloaded
+                self.repository.update_trades_last_downloaded(symbol=symbol, account=self.alias)
+                logger.warning(f'{self.alias}: Updating trades for {symbol}')
 
                 traded_symbols = [symbol]
 
